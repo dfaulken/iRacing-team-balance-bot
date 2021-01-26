@@ -1,5 +1,5 @@
 .env
 bot.log
-data/*
+data/*/
 deploy.txt
 runlist.txt
