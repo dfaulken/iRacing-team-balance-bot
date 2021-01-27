@@ -488,8 +488,6 @@ async def on_ready():
   logging.info('Logged in as {0.user}'.format(di_client))
   asyncio.get_event_loop().create_task(periodic_task())
   logging.info('Periodic task established.')
-  # response = await ir_client.driver_stats(search="Andrew Surowiec2", category=constants.Category.road.value)
-  # logging.info(response)
 
 @di_client.event
 async def on_message(message):
@@ -547,7 +545,7 @@ async def on_message(message):
         **drivers** - show list of added drivers for this server
         **add driver** Driver Name *Driver ID* - add this driver to the driver list for this server.
             You can comma-separate multiple drivers.
-            Pending: You can write just the driver name, and I will look up the driver ID for you.
+            You can write just the driver name, and I will look up the driver ID for you.
             I will periodically check each driver's iRating and cache it if it's changed.
         **remove driver** Driver Name - remove this driver from the driver list for this server.
         **clear drivers** - clear the driver list for this server.
@@ -646,9 +644,22 @@ async def on_message(message):
         driver_name = driver_data.split(' ' + driver_id)[0]
         if not driver_id.isnumeric():
           logging.info('Driver ID is not not numeric.')
-          await channel.send("Sorry, I'm not able to look up driver ID based on name only yet. Please add the driver by both name and iRacing ID.")
-          logging.info('Response sent.')
-          return
+          driver_name = driver_data
+          await channel.trigger_typing()
+          response = await ir_client._build_request(constants.URL_DRIVER_STATUS, {'searchTerms': driver_name})
+          found_ids = [data['custid'] for data in response.json()['searchRacers']]
+          if found_ids:
+            if len(found_ids) == 1:
+              logging.info('One ID found.')
+              driver_id = found_ids[0]
+            else:
+              logging.info('Multiple IDs found.')
+              await channel.send("Multiple drivers were found with the name {0}. Please check if the driver you're trying to add has a more specific name (maybe a digit at the end).".format(driver_name))
+              return
+          else:
+            logging.info('No ID found.')
+            await channel.send('No driver was found with the name {0}. Please check if that is their exact name on iRacing - or add them with their iRacing ID.'.format(driver_name))
+            return
         found_driver = None
         for driver in drivers:
           if driver.name == driver_name:
