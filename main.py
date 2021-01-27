@@ -427,10 +427,10 @@ async def get_irating(driver_id):
   subsession_ids = [event_result.subsession_id for event_result in event_results]
   subsession_id = subsession_ids[0]
   subsession_data = await ir_client.subsession_data(subsession_id)
-  new_iratings = [driver.irating_new for driver in subsession_data.driver if driver.cust_id == driver_id]
+  new_iratings = [driver.irating_new for driver in subsession_data.driver if str(driver.cust_id) == driver_id]
   if new_iratings:
     irating = new_iratings[0] # They're all the same.
-  if not irating:
+  else:
     logging.info("Couldn't find iRating for driver ID {0} from subsessions. Finding from chart.".format(driver_id))
     irating = await get_irating_from_chart(driver_id)
   return irating
