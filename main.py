@@ -63,6 +63,7 @@ class FilePrefix(Enum):
   channel_id = 'channel_id'
 
 def guild_ids():
+  pdb.set_trace()
   return [file.name for file in os.scandir('data') if file.is_dir()]
 
 def guild_dir_path(guild_id):
@@ -647,18 +648,18 @@ async def on_message(message):
           driver_name = driver_data
           await channel.trigger_typing()
           response = await ir_client._build_request(constants.URL_DRIVER_STATUS, {'searchTerms': driver_name})
-          found_ids = [data['custid'] for data in response.json()['searchRacers']]
-          if found_ids:
-            if len(found_ids) == 1:
-              logging.info('One ID found.')
-              driver_id = found_ids[0]
-            else:
-              logging.info('Multiple IDs found.')
-              await channel.send("Multiple drivers were found with the name {0}. Please check if the driver you're trying to add has a more specific name (maybe a digit at the end).".format(driver_name))
-              return
-          else:
+          drivers_response_data = response.json()['searchRacers']
+          if not drivers_response_data:
             logging.info('No ID found.')
             await channel.send('No driver was found with the name {0}. Please check if that is their exact name on iRacing - or add them with their iRacing ID.'.format(driver_name))
+            return
+          exact_matches = [data['custid'] for data in drivers_response_data if data['name'].replace('+', ' ') == driver_name]
+          if exact_matches:
+            logging.info('One ID found.')
+            driver_id = exact_matches[0]
+          else:
+            logging.info('Multiple IDs found.')
+            await channel.send("Multiple drivers were found with the name {0}. Please check if the driver you're trying to add has a more specific name (maybe a digit at the end).".format(driver_name))
             return
         found_driver = None
         for driver in drivers:
