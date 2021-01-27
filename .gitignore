@@ -1,5 +1,6 @@
 .env
 bot.log
 data/*/
+data/*.json
 deploy.txt
 runlist.txt

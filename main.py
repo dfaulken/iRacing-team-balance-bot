@@ -21,6 +21,7 @@ import re
 from textwrap import dedent
 
 BACKGROUND_RECHECK_PERIOD_MINUTES = 15
+QUARTER_CHECK_PERIOD_MINUTES = 60
 
 dotenv.load_dotenv()
 di_client = discord.Client()
@@ -61,22 +62,33 @@ class FilePrefix(Enum):
   balance = 'balance'
   balance_threshold = 'balance_threshold'
   channel_id = 'channel_id'
+  quarter_number = 'quarter_number'
 
 def guild_ids():
   return [file.name for file in os.scandir('data') if file.is_dir()]
 
+def data_dir_path():
+  return 'data'
+
 def guild_dir_path(guild_id):
-  return 'data/{0}'.format(guild_id)
+  return '{0}/{1}'.format(data_dir_path(), guild_id)
 
 def guild_has_data(guild_id):
   return os.path.isdir(guild_dir_path(guild_id))
   
 def initialize_guild_data(guild_id):
   pathlib.Path(guild_dir_path(guild_id)).mkdir()
-  
+
+def global_file_path(file_type):
+  path = '{0}/{1}.json'.format(data_dir_path(), file_type.value)
+  return path
+
 def guild_file_path(guild_id, file_type):
   path = '{0}/{1}.json'.format(guild_dir_path(guild_id), file_type.value)
   return path
+  
+def global_data_has_file(file_type):
+  return os.path.isfile(global_file_path(file_type))
 
 def guild_has_file(guild_id, file_type):
   return os.path.isfile(guild_file_path(guild_id, file_type))
@@ -241,6 +253,23 @@ def persist_channel_id(guild_id, channel_id):
     initialize_guild_data(guild_id)
   with open(guild_file_path(guild_id, FilePrefix.channel_id), 'w') as channel_id_file:
     json.dump({'channel_id': channel_id}, channel_id_file)
+
+def load_quarter_number():
+  if not global_data_has_file(FilePrefix.quarter_number):
+    logging.warning("Could not find current quarter number.")
+    return None
+  file_path = global_file_path(FilePrefix.quarter_number)
+  with open(file_path, 'r') as quarter_number_file:
+    try:
+      return json.load(quarter_number_file)['quarter_number']
+    except json.JSONDecodeError:
+      logging.warning('Encountered JSONDecodeError for file {0}'.format(file_path))
+      return None
+    
+def persist_quarter_number(number):
+  logging.info('Persisting quarter number.')
+  with open(global_file_path(FilePrefix.quarter_number), 'w') as quarter_number_file:
+    json.dump({'quarter_number': number}, quarter_number_file)
     
 def possible_size_patterns(driver_count, team_sizes):
   logging.info('Calculating possible size patterns for driver count {0} and team sizes {1}'.format(driver_count, team_sizes))
@@ -377,6 +406,34 @@ def apply_new_drivers_to_teams(drivers, teams):
           team[index] = new_driver
           break
   return teams
+ 
+async def lookup_current_quarter_number():
+  seasons = await ir_client.current_seasons(only_active=True)
+  quarters = [season.season_quarter for season in seasons]
+  persist_quarter_number(quarters[0]) # They should all be fine.
+  
+async def get_irating_from_chart(driver_id):
+  chart_data = await ir_client.irating(cust_id=driver_id, category=constants.Category.road.value)
+  return chart_data.current().value
+ 
+async def get_irating(driver_id):
+  irating = None
+  event_results = await ir_client.event_results(driver_id, 
+                                                load_quarter_number(), 
+                                                show_races=1, 
+                                                show_official=1, 
+                                                result_num_high=1, 
+                                                category=constants.Category.road.value)
+  subsession_ids = [event_result.subsession_id for event_result in event_results]
+  subsession_id = subsession_ids[0]
+  subsession_data = await ir_client.subsession_data(subsession_id)
+  new_iratings = [driver.irating_new for driver in subsession_data.driver if driver.cust_id == driver_id]
+  if new_iratings:
+    irating = new_iratings[0] # They're all the same.
+  if not irating:
+    logging.info("Couldn't find iRating for driver ID {0} from subsessions. Finding from chart.".format(driver_id))
+    irating = await get_irating_from_chart(driver_id)
+  return irating
   
 async def recheck_all_driver_iratings(channel, drivers, on_demand=False):
   logging.info('Rechecking all driver ratings.')
@@ -385,12 +442,10 @@ async def recheck_all_driver_iratings(channel, drivers, on_demand=False):
     if on_demand or changed:
       await channel.trigger_typing()
     logging.info('Initiating iRating request.')
-    response = await ir_client.irating(cust_id=driver.id, category=constants.Category.road.value)
-    new_irating = response.current().value
+    new_irating = await get_irating(driver.id)
     if new_irating != driver.irating:
       changed = True
       driver.irating = new_irating
-      driver.last_updated = response.current().datetime
       await channel.send('Driver {0} has changed iRating: {1}.'.format(driver.name, driver.irating))
   if on_demand:
     if changed:
@@ -479,15 +534,17 @@ async def background_recheck():
       await channel.send(message)
 
 async def periodic_task():
-  logging.info('Establishing periodic task.')
-  p = Periodic(BACKGROUND_RECHECK_PERIOD_MINUTES * 60, background_recheck)
-  await p.start()
+  logging.info('Establishing periodic tasks.')
+  p1 = Periodic(BACKGROUND_RECHECK_PERIOD_MINUTES * 60, background_recheck)
+  await p1.start()
+  p2 = Periodic(QUARTER_CHECK_PERIOD_MINUTES * 60, lookup_current_quarter_number)
+  await p2.start()
   
 @di_client.event
 async def on_ready():
   logging.info('Logged in as {0.user}'.format(di_client))
   asyncio.get_event_loop().create_task(periodic_task())
-  logging.info('Periodic task established.')
+  await lookup_current_quarter_number()
 
 @di_client.event
 async def on_message(message):
@@ -672,12 +729,11 @@ async def on_message(message):
           continue
         await channel.trigger_typing()
         logging.info('Initiating iRating request.')
-        response = await ir_client.irating(cust_id=driver_id, category=constants.Category.road.value)
-        driver_irating = response.current().value
-        driver_last_updated = response.current().datetime
-        drivers.append(Driver(driver_id, driver_name, driver_irating, driver_last_updated))
+        driver_irating = await get_irating(driver_id)
+        driver = Driver(driver_id, driver_name, driver_irating, datetime.datetime.today())
+        drivers.append(driver)
         persist_drivers(guild_id, drivers)
-        await channel.send('Added {0} driver {1} (iRacing ID {2}).'.format(guild_name, driver_name, driver_id))
+        await channel.send('Added driver {0} (iRacing ID {1}), road iRating {2} (last updated {3})'.format(driver.name, driver.id, driver.irating, driver.last_updated))
           
     
     elif msg.startswith('remove driver '):
@@ -739,13 +795,12 @@ async def on_message(message):
               found_driver = driver
               await channel.trigger_typing()
               logging.info('Initiating iRating request.')
-              response = await ir_client.irating(cust_id=driver.id, category=constants.Category.road.value)
-              new_irating = response.current().value
+              new_irating = await get_irating(driver.id)
               if new_irating != driver.irating:
                 logging.info('iRating has changed.')
                 changed = True
                 driver.irating = new_irating
-                driver.last_updated = response.current().datetime
+                driver.last_updated = datetime.datetime.today()
                 await channel.send('Driver {0} has changed iRating: {1}.'.format(driver.name, driver.irating))
               else:
                 logging.info('iRating has not changed.')
