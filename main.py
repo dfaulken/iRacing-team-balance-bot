@@ -63,7 +63,6 @@ class FilePrefix(Enum):
   channel_id = 'channel_id'
 
 def guild_ids():
-  pdb.set_trace()
   return [file.name for file in os.scandir('data') if file.is_dir()]
 
 def guild_dir_path(guild_id):
