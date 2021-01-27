@@ -488,7 +488,8 @@ async def background_recheck():
       new_gap = irating_gap(new_fixed_teams)
       if threshold and new_gap > threshold:
         logging.info('Balance threshold is configured and the new gap exceeds the threshold.')
-        message = "**WARNING**: The iRating gap of the fixed teams has moved outside of the balance threshold ({0})".format(round(threshold, 2))
+        verb = 'remains' if old_gap > threshold else 'has moved'
+        message = "**WARNING**: The iRating gap of the fixed teams {0} outside of the balance threshold ({1})".format(verb, round(threshold, 2))
         teams_to_show = new_fixed_teams
       else:
         logging.info('Balance threshold is not configured, or the new gap does not exceed the threshold.')
@@ -504,11 +505,15 @@ async def background_recheck():
           logging.info('Balance threshold is configured.')
           if new_gap > threshold:
             logging.info('New gap exceeds balance threshold.')
-            message = "The optimal balance of team members has not changed, but the iRating gap has moved outside of the balance threshold ({0})".format(round(threshold, 2))
+            if old_gap > threshold:
+              conjunction, verb = 'and', 'remains'
+            else:
+              conjunction, verb = 'but', 'has moved'
+            message = "The optimal balance of team members has not changed, {0} the iRating gap {1} outside of the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
             teams_to_show = new_balance
           else:
             logging.info('New gap does not exceed balance threshold.')
-            message = "The optimal balance of team members has not changed.\nThe iRating gap has changed from {0} to {1}, but remains inside the balance threshold ({2}).".format(round(old_gap, 2), round(new_gap, 2), round(threshold, 2))
+            message = "The optimal balance of team members has not changed.\nThe iRating gap has changed from {0} to {1}, which is inside the balance threshold ({2}).".format(round(old_gap, 2), round(new_gap, 2), round(threshold, 2))
             teams_to_show = None
         else:
           logging.info('Balance threshold is not configured. Nothing to report.')
@@ -519,10 +524,18 @@ async def background_recheck():
           logging.info('Balance threshold is configured.')
           if new_gap > threshold:
             logging.info('New gap exceeds threshold.')
-            message = "The optimal balance of team members has changed, and the iRating gap has moved outside of the balance threshold ({0})".format(round(threshold, 2))
+            if old_gap > threshold:
+              conjunction, verb = 'but', 'remains'
+            else:
+              conjunction, verb = 'and', 'has moved'
+            message = "The optimal balance of team members has changed, {0} the iRating gap {1} outside of the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
           else:
             logging.info('New gap is within threshold.')
-            message = "The optimal balance of team members has changed, but the iRating gap remains inside the balance threshold ({0})".format(round(threshold, 2))
+            if old_gap > threshold:
+              conjunction, verb = 'and', 'has moved'
+            else:
+              conjunction, verb = 'but', 'remains'
+            message = "The optimal balance of team members has changed, {0} the iRating gap {1} inside the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
         else:
           logging.info('Balance threshold is not configured.')
           message = "The optimal balance of team members has changed"
