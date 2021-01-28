@@ -56,13 +56,14 @@ class Driver:
     return json_data
 
 class FilePrefix(Enum):
-  drivers = 'drivers'
-  team_sizes = 'team_sizes'
-  teams = 'teams'
   balance = 'balance'
   balance_threshold = 'balance_threshold'
   channel_id = 'channel_id'
+  combinations = 'combinations'
+  drivers = 'drivers'
   quarter_number = 'quarter_number'
+  team_sizes = 'team_sizes'
+  teams = 'teams'
 
 def guild_ids():
   return [file.name for file in os.scandir('data') if file.is_dir()]
@@ -271,6 +272,38 @@ def persist_quarter_number(number):
   with open(global_file_path(FilePrefix.quarter_number), 'w') as quarter_number_file:
     json.dump({'quarter_number': number}, quarter_number_file)
     
+def load_combinations(guild_id):
+  logging.info('Loading combinations for guild {0}'.format(guild_id))
+  if not guild_has_data(guild_id):
+    return []
+  if not guild_has_file(guild_id, FilePrefix.combinations):
+    return []
+  file_path = guild_file_path(guild_id, FilePrefix.combinations)
+  with open(file_path, 'r') as combinations_file:
+    try:
+      combinations_json_data = json.load(combinations_file)
+      combinations = []
+      for combination_json_data in combinations_json_data:
+        combinations.append(Driver.decode(combination_json_data))
+      return combinations
+    except json.JSONDecodeError:
+      logging.warning('Encountered JSONDecodeError for file {0}'.format(file_path))
+      return []
+
+def persist_combinations(guild_id, combinations):
+  logging.info('Persisting combinations for guild {0}'.format(guild_id))
+  if not guild_has_data(guild_id):
+    initialize_guild_data(guild_id)
+  with open(guild_file_path(guild_id, FilePrefix.combinations), 'w') as combinations_file:
+    combinations_json_data = []
+    for combination in combinations:
+      combinations_json_data.append(Driver.encode(combination))
+    json.dump(combinations_json_data, combinations_file)
+
+def clear_combinations(guild_id):
+  if guild_has_file(guild_id, FilePrefix.combinations):
+    clear_guild_file(guild_id, FilePrefix.combinations)
+    
 def possible_size_patterns(driver_count, team_sizes):
   logging.info('Calculating possible size patterns for driver count {0} and team sizes {1}'.format(driver_count, team_sizes))
   patterns = []
@@ -329,58 +362,83 @@ def unique_groupings(elements, size):
   logging.debug('Found {0} groupings.'.format(len(groupings)))
   return groupings
 
-def find_possible_combinations(drivers, team_sizes):
-  combinations = []
+def find_possible_sets(drivers, team_sizes):
+  sets = []
   # Find the possible (unique) ways to break down the number of drivers into teams of the allowed size.
-  # Throughout, sort the drivers in each team by iRating (highest first), and the teams in each combination by iRating of first driver in each team.
+  # Throughout, sort the drivers in each team by iRating (highest first), and the teams in each set by iRating of first driver in each team.
   for size_pattern in possible_size_patterns(len(drivers), team_sizes):
     logging.debug('Size pattern is {0}.'.format(size_pattern))
     # Find the possible ways to assign drivers to the first team in the pattern.
-    pattern_combinations = [[team] for team in unique_groupings(drivers, size_pattern[0])]
-    for combination in pattern_combinations:
-      for team in combination:
+    pattern_sets = [[team] for team in unique_groupings(drivers, size_pattern[0])]
+    for set in pattern_sets:
+      for team in set:
         team.sort(key=lambda driver: driver.irating, reverse=True)
-    # For the next team, expand each existing possibility for the first n teams into a suite of combinations for how to assign some of the remaining drivers into the first n + 1 teams.
+    # For the next team, expand each existing possibility for the first n teams into a suite of sets for how to assign some of the remaining drivers into the first n + 1 teams.
     for team_size in size_pattern[1:]:
-      next_level_pattern_combinations = []
-      for combination in pattern_combinations:
-        already_assigned_driver_names = [driver.name for driver in sum(combination, [])]
-        remaining_drivers = [driver for driver in drivers if driver.name not in already_assigned_driver_names]
+      next_level_pattern_sets = []
+      for set in pattern_sets:
+        already_assigned_driver_ids = [driver.id for driver in sum(set, [])] # flatten
+        remaining_drivers = [driver for driver in drivers if driver.id not in already_assigned_driver_ids]
         groupings = unique_groupings(remaining_drivers, team_size)
         for grouping in groupings:
           grouping.sort(key=lambda driver: driver.irating, reverse=True)
-          new_combination = combination + [grouping]
-          new_combination.sort(key=lambda team: team[0].irating, reverse=True)
-          next_level_pattern_combinations.append(new_combination)
-      pattern_combinations = next_level_pattern_combinations
-    combinations += pattern_combinations
-  logging.info('Found {0} possible combinations of {1} drivers into teams of size {2}'.format(len(combinations), len(drivers), team_sizes))
-  return combinations
+          new_set = set + [grouping]
+          new_set.sort(key=lambda team: team[0].irating, reverse=True)
+          next_level_pattern_sets.append(new_set)
+      pattern_sets = next_level_pattern_sets
+    sets += pattern_sets
+  logging.info('Found {0} possible combinations of {1} drivers into teams of size {2}'.format(len(sets), len(drivers), team_sizes))
+  return sets
+  
+def set_respects_combination(set, combination):
+  for team in set:
+    team_driver_ids = [driver.id for driver in team]
+    included = [driver.id in team_driver_ids for driver in combination]
+    if all(included):
+      return True
+  return False
+  
+def filter_sets_by_driver_combinations(sets, combinations):
+  matching_sets = copy.copy(sets)
+  for combination in combinations:
+    sets_matching_combination = []
+    for set in matching_sets:
+        if set_respects_combination(set, combination):
+          sets_matching_combination.append(set)
+    matching_sets = sets_matching_combination
+  return matching_sets
   
 def average_irating(team):
   return sum([driver.irating for driver in team], 0) / len(team);
 
-def irating_gap(combination):
-  averages = [average_irating(team) for team in combination]
+def irating_gap(set):
+  averages = [average_irating(team) for team in set]
   return max(averages) - min(averages)
 
-def find_balanced_teams(drivers, team_sizes):
-  # Find all possible combinations of drivers into teams of allowed sizes.
-  # Sort these combinations according to the gap between the teams' average iRating.
-  combinations = find_possible_combinations(drivers, team_sizes)
-  combinations.sort(key=irating_gap)
-  # Return the combination with the smallest gap.
-  return combinations[0]
-  
-def combinations_equivalent(comb1, comb2):
-  logging.debug('Checking equivalency of combinations {0} and {1}'.format(comb1, comb2))
-  if len(comb1) != len(comb2):
+def find_balanced_teams(drivers, team_sizes, combinations):
+  # Find all possible sets of drivers into teams of allowed sizes.
+  # Sort these sets according to the gap between the teams' average iRating.
+  sets = find_possible_sets(drivers, team_sizes)
+  if combinations:
+    sets = filter_sets_by_driver_combinations(sets, combinations)
+  sets.sort(key=irating_gap)
+  # Return the set with the smallest gap.
+  return sets[0]
+
+def teams_equivalent(team1, team2):
+  if not len(team1) == len(team2):
     return False
-  for team1 in comb1:
+  matches = [driver2.id in [driver1.id for driver1 in team1] for driver2 in team2]
+  return all(matches)
+  
+def sets_equivalent(set1, set2):
+  logging.debug('Checking equivalency of sets {0} and {1}'.format(set1, set2))
+  if len(set1) != len(set2):
+    return False
+  for team1 in set1:
     equivalent_team_found = False
-    for team2 in comb2:
-      matches = [driver2.name in [driver1.name for driver1 in team1] for driver2 in team2]
-      if all(matches):
+    for team2 in set2:
+      if teams_equivalent(team1, team2):
         equivalent_team_found = True
         break
     if not equivalent_team_found:
@@ -472,14 +530,8 @@ async def background_recheck():
     if not changed:
       return
     persist_drivers(guild_id, drivers)
-    team_sizes = load_team_sizes(guild_id)
-    if not team_sizes:
-      return
-    balance = load_balance(guild_id)
-    new_balance = find_balanced_teams(drivers, team_sizes)
-    persist_balance(guild_id, new_balance)
-    threshold = load_balance_threshold(guild_id)
     fixed_teams = load_teams(guild_id)
+    threshold = load_balance_threshold(guild_id)
     if fixed_teams:
       logging.info('Guild has fixed teams. Applying newly updated drivers to existing teams in order to calculate new iRating gap.')
       old_gap = irating_gap(fixed_teams)
@@ -496,10 +548,18 @@ async def background_recheck():
         message = "The iRating gap of the fixed teams has changed from {0} to {1}.".format(round(old_gap, 2), round(new_gap, 2))
         teams_to_show = None
     else:
-      logging.info('Guild does not have fixed teams. Calculating the difference in iRating gap between the new and old balances.')
+      logging.info('Guild does not have fixed teams. Calculating optimal balance, then calculating the difference in iRating gap between the new and old balances.')
+      team_sizes = load_team_sizes(guild_id)
+      if not team_sizes:
+        logging.info('Guild does not have team sizes.')
+        return
+      balance = load_balance(guild_id)
+      combinations = load_combinations(guild_id)
+      new_balance = find_balanced_teams(drivers, team_sizes, combinations)
+      persist_balance(guild_id, new_balance)
       old_gap = irating_gap(balance)
       new_gap = irating_gap(new_balance)
-      if combinations_equivalent(balance, new_balance):
+      if sets_equivalent(balance, new_balance):
         logging.info('New and old balances are equivalent.')
         if threshold:
           logging.info('Balance threshold is configured.')
@@ -518,7 +578,7 @@ async def background_recheck():
         else:
           logging.info('Balance threshold is not configured. Nothing to report.')
       else:
-        logging.info('New combination is not equivalent to old combination.')
+        logging.info('New set is not equivalent to old set.')
         teams_to_show = new_balance
         if threshold:
           logging.info('Balance threshold is configured.')
@@ -576,7 +636,6 @@ async def on_message(message):
     logging.debug('Message content is ' + message.content)
     re_match = message_text_re.match(message.content)
     if not re_match:
-      pdb.set_trace()
       logging.warning('RE failed to match message content despite bot being mentioned.')
       return
       
@@ -628,6 +687,11 @@ async def on_message(message):
             Once team sizes are set (and drivers are added), I will report on the optimal balance as it changes.
         **set team sizes** *m*, *n*, ... - set the allowed team sizes for the current event. I will only allow for teams of these sizes when calculating balance.
         
+        **combine drivers** Driver Name, Driver Name, .... - force balance calculations to only consider sets of teams where the named drivers are on a team together.
+          Note that using this feature may significantly hurt your server's ability to balance its drivers.
+        **combinations** - show current combinations of drivers.
+        **remove combination** Driver Name, Driver Name, ... - remove the combination of drivers listed.
+        **clear combinations** - clear all combinations.
       ''').strip()
       await channel.send(commands_list_part_1)
       commands_list_part_2 = dedent('''
@@ -661,13 +725,17 @@ async def on_message(message):
       else:
         message += 'No drivers have been added.\n'
       if guild_has_file(guild_id, FilePrefix.team_sizes):
-        message += '{0} team sizes have been configured for balance calculation purposes.\n'.format(len(load_team_sizes(guild_id)))
+        message += '{0} team size(s) has/have been configured for balance calculation purposes.\n'.format(len(load_team_sizes(guild_id)))
       else:
         message += 'Team sizes have not yet been configured for balance calculation purposes.\n'
       if guild_has_file(guild_id, FilePrefix.balance):
         message += 'I have calculated the optimal iRating balance of team members into teams based on the added drivers and configured team sizes.\n'
       else:
         message += 'I have not yet calculated balance, but calculation is possible at any time.\n'
+      if guild_has_file(guild_id, FilePrefix.combinations):
+        message += '{0} combination(s) of drivers have been set. Balance calculations will only include sets of teams where each combination of drivers is on the same team.\n'.format(len(load_combinations(guild_id)))
+      else:
+        message += 'No combinations of drivers have been set. Balance calculations will include all possible sets of teams.\n'
       if guild_has_file(guild_id, FilePrefix.teams):
         message += 'Drivers have been set into {0} fixed teams. If monitoring is established, I will monitor the balance of these specific teams, whether or not they are the optimal balance.\n'.format(len(load_teams(guild_id)))
       else:
@@ -774,6 +842,24 @@ async def on_message(message):
         if guild_has_file(guild_id, FilePrefix.balance):
           clear_balance(guild_id)
           await channel.send('Calculated optimal balance is no longer valid and has been cleared.')
+        combinations = load_combinations(guild_id)
+        if combinations:
+          for combination in combinations:
+            matching_driver = None
+            for driver in combination:
+              if driver.id == found_driver.id:
+                matching_driver = driver
+                break
+            if matching_driver:
+              combination_driver_names = ', '.join([driver.name for driver in combination])
+              combination.remove(driver)
+              if len(combination) > 1:
+                await channel.send('Removing {0} from driver combination {1}.'.format(found_driver.name, combination_driver_names))
+              else:
+                await channel.send('Removing driver combination {0} as it is no longer valid without {1}.'.format(combination_driver_names, found_driver.name))
+                combinations.remove(combination)
+              break # safe because drivers can only be in one combination
+          persist_combinations(guild_id, combinations)
       else:
         logging.info('Driver not found.')
         await channel.send("Sorry, I couldn't find a {0} driver named {1}. Use the 'drivers' command to see the list of currently added drivers.".format(guild_name, driver_name))
@@ -848,6 +934,101 @@ async def on_message(message):
         clear_balance(guild_id)
         await channel.send('Calculated balance has been cleared.')
     
+    elif msg.startswith('combine drivers '):
+      logging.info('Processing combine drivers request')
+      drivers = load_drivers(guild_id)
+      if not drivers:
+        await channel.send('No {0} drivers have been added.'.format(guild_name))
+        return
+        logging.info('Response not sent. No drivers added.')
+      drivers_list_str = msg.split('combine drivers ')[1]
+      combination_drivers = []
+      for driver_name in drivers_list_str.split(', '):
+        found_driver = None
+        for driver in drivers:
+          if driver.name == driver_name:
+            found_driver = driver
+            break
+        if found_driver:
+          if found_driver in combination_drivers:
+            logging.info('Driver was repeated within specified combination.')
+            await channel.send('Driver {0} was listed more than once. Please ensure drivers are only listed once.'.format(driver_name))
+            return
+          else:
+            combination_drivers.append(found_driver)
+        else:
+          logging.info('Driver not found in known drivers.')
+          await channel.send("Sorry, I couldn't find a {0} driver named {1}. Use 'drivers' command to see the list of currently added drivers.".format(guild_name, driver_name))
+          return
+      combinations = load_combinations(guild_id)
+      combined_driver_ids = [driver.id for driver in sum(combinations, [])]
+      already_combined_drivers = [driver for driver in combination_drivers if driver.id in combined_driver_ids]
+      if already_combined_drivers:
+        for driver in already_combined_drivers:
+          await channel.send('{0} is already included in a driver combination.'.format(driver.name))
+        await channel.send("I don't support combining existing combinations together (yet). Please manually remove conflicting combinations and re-add them with all the drivers you wish to combine together.")
+      else:
+        combinations.append(combination_drivers)
+        persist_combinations(guild_id, combinations)
+        message = 'Saved driver combination {0}.'.format(drivers_list_str)
+        if load_teams(guild_id):
+          message += '\nNote that since {0} teams have been set, balance monitoring and notification will continue to check against the set teams. Driver combinations will not be taken into account.'.format(guild_name)
+        else:
+          balance = load_balance(guild_id)
+          if balance and not set_respects_combination(balance, combination_drivers):
+            clear_balance(guild_id)
+            message += '\nSaved balance has been cleared as it was invalidated by this combination.'
+        await channel.send(message)
+      
+    elif msg.startswith('combinations'):
+      logging.info('Processing combinations get request')
+      combinations = load_combinations(guild_id)
+      if not combinations:
+        logging.info('No combinations found.')
+        await channel.send('{0} has no combinations of drivers.'.format(guild_name))
+        return
+      message = 'Combinations of {0} drivers:\n'.format(guild_name)
+      combination_text = []
+      for combination in combinations:
+        driver_names = [driver.name for driver in combination]
+        combination_text.append(', '.join(driver_names))
+      message += '\n'.join(combination_text)
+      await channel.send(message)
+      
+    elif msg.startswith('remove combination'):
+      logging.info('Processing remove combination request')
+      drivers_list_str = msg.split('remove combination ')[1]
+      drivers = load_drivers(guild_id)
+      combination_drivers = []
+      for driver_name in drivers_list_str.split(', '):
+        found_driver = None
+        for driver in drivers:
+          if driver.name == driver_name:
+            found_driver = driver
+            break
+        if not found_driver:
+          logging.info('Driver not found in known drivers.')
+          await channel.send("Sorry, I couldn't find a {0} driver named {1}. Use 'drivers' command to see the list of currently added drivers.".format(guild_name, driver_name))
+          return  
+        combination_drivers.append(found_driver)
+      combinations = load_combinations(guild_id)
+      found_combination = None
+      for combination in combinations:
+        if teams_equivalent(combination, combination_drivers):
+          found_combination = combination
+          break
+      if found_combination:
+        combinations.remove(found_combination)
+        persist_combinations(guild_id, combinations)
+        await channel.send('Removed driver combination {0}.'.format(drivers_list_str))
+      else:
+        await channel.send("Sorry, I couldn't find a combination of {0} drivers matching {1}. Use 'combinations' command to see existing combinations.".guild_name(guild_name, drivers_list_str))
+    
+    elif msg.startswith('clear combinations'):
+      logging.info('Processing clear combinations request')
+      clear_combinations(guild_id)
+      await channel.send('All combinations of {0} drivers have been cleared.'.format(guild_name))
+    
     elif msg.startswith('balance') and not msg.startswith('balance threshold'):
       logging.info('Processing balance get request')
       balance = load_balance(guild_id)
@@ -871,11 +1052,12 @@ async def on_message(message):
         await channel.send("Allowed team sizes have not been defined. Use 'set team sizes' command to set allowed team sizes first.".format(guild_name))
         return
       balance = load_balance(guild_id)
+      combinations = load_combinations(guild_id)
       await channel.trigger_typing()
-      balanced_teams = find_balanced_teams(drivers, team_sizes)
+      balanced_teams = find_balanced_teams(drivers, team_sizes, combinations)
       logging.info('Balance calculated.')
       header = "Optimal balance of {0} drivers".format(guild_name)
-      if not combinations_equivalent(balance, balanced_teams):
+      if not sets_equivalent(balance, balanced_teams):
         logging.info('Balance is new.')
         persist_balance(guild_id, balanced_teams)
         header = "**New** optimal balance of {0} drivers".format(guild_name)
@@ -950,7 +1132,7 @@ async def on_message(message):
     elif msg.startswith('set balance threshold '):
       logging.info('Processing balance threshold set request')
       threshold = msg.split('set balance threshold ')[1]
-      if threshold.replace('.', '', 1).isdigit():
+      if threshold.replace('.', '', 1).isdigit(): # shorthand for 'is this some kind of number, perhaps a decimal'
         persist_balance_threshold(guild_id, threshold)
         await channel.send('Balance threshold for {0} set to {1}.'.format(guild_name, threshold))
         logging.info('Response sent.')
