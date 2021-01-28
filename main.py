@@ -696,7 +696,7 @@ async def on_message(message):
       await channel.send(commands_list_part_1)
       commands_list_part_2 = dedent('''
         **balance** - show most recently calculated optimal balance of team members into teams.
-        **recheck balance** - manually trigger a recheck of the optimal balance based on most recently cached road iRatings.
+        **recalculate balance** - manually trigger a recheck of the optimal balance based on most recently cached road iRatings.
         
         **teams** - show fixed teams for the upcoming event.
             I will monitor the balance of these teams to make sure it does not fall outside of the configured threshold. 
@@ -1034,12 +1034,17 @@ async def on_message(message):
       balance = load_balance(guild_id)
       if not balance:
         logging.info('Balance not found.')
-        await channel.send("Balance has not yet been calculated for {0}. Use command 'recheck balance' to manually trigger balance calculation.".format(guild_name))
+        await channel.send("Balance has not yet been calculated for {0}. Use command 'recalculate balance' to manually trigger balance calculation.".format(guild_name))
       else:
         await channel.send(display_format_teams(balance, "Optimal balance of {0} drivers".format(guild_name)))
         logging.info('Response sent.')
-    
+        
     elif msg.startswith('recheck balance'):
+      logging.info('Processing deprecated `recheck balance` request')
+      await channel.send("The 'recheck balance' command has changed to 'recalculate balance'."
+      logging.info('Response sent.')
+    
+    elif msg.startswith('recalculate balance'):
       logging.info('Processing balance check request')
       drivers = load_drivers(guild_id)
       if not drivers:
@@ -1085,7 +1090,7 @@ async def on_message(message):
         teams = load_balance(guild_id)
         if not teams:
           logging.info('Balance not found.')
-          await channel.send("Balance has not yet been calculated for {0}. Use command 'recheck balance' to manually trigger balance calculation.".format(guild_name))
+          await channel.send("Balance has not yet been calculated for {0}. Use command 'recalculate balance' to manually trigger balance calculation.".format(guild_name))
           return
       else:  
         for drivers_list_str in teams_list_str.split('; '):
