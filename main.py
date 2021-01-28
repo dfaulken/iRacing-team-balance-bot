@@ -343,6 +343,14 @@ def possible_size_patterns(driver_count, team_sizes):
     logging.info('Found pattern {0}'.format(pattern))
   return unique_patterns
   
+# TODO there should be some algorithm to determine whether combinations place impossible constraints
+def reason_cannot_calculate_balance(driver_count, team_sizes):
+  if not driver_count >= min(team_sizes) * 2:
+    return "There are not enough drivers to form teams of the specified size(s)."
+  if not possible_size_patterns(driver_count, team_sizes):
+    return "It is not possible to form teams of the specified size(s) with {0} drivers.".format(driver_count)
+  return None
+  
 def unique_groupings(elements, size):
   logging.debug('Calculating unique groupings of {0} elements into size {1}'.format(len(elements), size))
   if size == 1:
@@ -512,100 +520,107 @@ async def recheck_all_driver_iratings(channel, drivers, on_demand=False):
       await channel.send('No drivers have changed iRating since their most recently cached update.')
   logging.info('Changed = {0}'.format(changed))
   return changed
+  
+async def background_recheck_guild(guild_id):
+  logging.info('Looking for data for guild {0}'.format(guild_id))
+  if not guild_has_file(guild_id, FilePrefix.channel_id):
+    return
+  logging.info('Data found.')
+  channel_id = load_channel_id(guild_id)
+  logging.info('Found channel ID {0}'.format(channel_id))
+  channel = di_client.get_channel(channel_id)
+  drivers = load_drivers(guild_id)
+  if not drivers:
+    return
+  changed = await recheck_all_driver_iratings(channel, drivers, on_demand=False)
+  if not changed:
+    return
+  persist_drivers(guild_id, drivers)
+  fixed_teams = load_teams(guild_id)
+  threshold = load_balance_threshold(guild_id)
+  if fixed_teams:
+    logging.info('Guild has fixed teams. Applying newly updated drivers to existing teams in order to calculate new iRating gap.')
+    old_gap = irating_gap(fixed_teams)
+    new_fixed_teams = apply_new_drivers_to_teams(drivers, fixed_teams)
+    persist_teams(guild_id, new_fixed_teams)
+    new_gap = irating_gap(new_fixed_teams)
+    if threshold and new_gap > threshold:
+      logging.info('Balance threshold is configured and the new gap exceeds the threshold.')
+      verb = 'remains' if old_gap > threshold else 'has moved'
+      message = "**WARNING**: The iRating gap of the fixed teams {0} outside of the balance threshold ({1})".format(verb, round(threshold, 2))
+      teams_to_show = new_fixed_teams
+    else:
+      logging.info('Balance threshold is not configured, or the new gap does not exceed the threshold.')
+      message = "The iRating gap of the fixed teams has changed from {0} to {1}.".format(round(old_gap, 2), round(new_gap, 2))
+      teams_to_show = None
+  else:
+    logging.info('Guild does not have fixed teams. Calculating optimal balance, then calculating the difference in iRating gap between the new and old balances.')
+    team_sizes = load_team_sizes(guild_id)
+    if not team_sizes:
+      logging.info('Guild does not have team sizes.')
+      return
+    balance = load_balance(guild_id)
+    combinations = load_combinations(guild_id)
+    reason = reason_cannot_calculate_balance(len(drivers), team_sizes)
+    if reason:
+      await channel.send("**WARNING**: It is not currently possible to perform a balance calculation: {0}".format(reason))
+      return
+    new_balance = find_balanced_teams(drivers, team_sizes, combinations)
+    persist_balance(guild_id, new_balance)
+    old_gap = irating_gap(balance)
+    new_gap = irating_gap(new_balance)
+    if sets_equivalent(balance, new_balance):
+      logging.info('New and old balances are equivalent.')
+      if threshold:
+        logging.info('Balance threshold is configured.')
+        if new_gap > threshold:
+          logging.info('New gap exceeds balance threshold.')
+          if old_gap > threshold:
+            conjunction, verb = 'and', 'remains'
+          else:
+            conjunction, verb = 'but', 'has moved'
+          message = "The optimal balance of team members has not changed, {0} the iRating gap {1} outside of the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
+          teams_to_show = new_balance
+        else:
+          logging.info('New gap does not exceed balance threshold.')
+          message = "The optimal balance of team members has not changed.\nThe iRating gap has changed from {0} to {1}, which is inside the balance threshold ({2}).".format(round(old_gap, 2), round(new_gap, 2), round(threshold, 2))
+          teams_to_show = None
+      else:
+        logging.info('Balance threshold is not configured. Nothing to report.')
+    else:
+      logging.info('New set is not equivalent to old set.')
+      teams_to_show = new_balance
+      if threshold:
+        logging.info('Balance threshold is configured.')
+        if new_gap > threshold:
+          logging.info('New gap exceeds threshold.')
+          if old_gap > threshold:
+            conjunction, verb = 'but', 'remains'
+          else:
+            conjunction, verb = 'and', 'has moved'
+          message = "The optimal balance of team members has changed, {0} the iRating gap {1} outside of the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
+        else:
+          logging.info('New gap is within threshold.')
+          if old_gap > threshold:
+            conjunction, verb = 'and', 'has moved'
+          else:
+            conjunction, verb = 'but', 'remains'
+          message = "The optimal balance of team members has changed, {0} the iRating gap {1} inside the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
+      else:
+        logging.info('Balance threshold is not configured.')
+        message = "The optimal balance of team members has changed"
+  if teams_to_show:
+    logging.info('Teams will be shown.')
+    await channel.send(display_format_teams(teams_to_show, message))
+  else:
+    logging.info('Teams will not be shown.')
+    await channel.send(message)
 
 async def background_recheck():
   logging.info('Starting background recheck.')
   for guild_id in guild_ids():
-    logging.info('Looking for data for guild {0}'.format(guild_id))
-    if not guild_has_file(guild_id, FilePrefix.channel_id):
-      return
-    logging.info('Data found.')
-    channel_id = load_channel_id(guild_id)
-    logging.info('Found channel ID {0}'.format(channel_id))
-    channel = di_client.get_channel(channel_id)
-    drivers = load_drivers(guild_id)
-    if not drivers:
-      return
-    changed = await recheck_all_driver_iratings(channel, drivers, on_demand=False)
-    if not changed:
-      return
-    persist_drivers(guild_id, drivers)
-    fixed_teams = load_teams(guild_id)
-    threshold = load_balance_threshold(guild_id)
-    if fixed_teams:
-      logging.info('Guild has fixed teams. Applying newly updated drivers to existing teams in order to calculate new iRating gap.')
-      old_gap = irating_gap(fixed_teams)
-      new_fixed_teams = apply_new_drivers_to_teams(drivers, fixed_teams)
-      persist_teams(guild_id, new_fixed_teams)
-      new_gap = irating_gap(new_fixed_teams)
-      if threshold and new_gap > threshold:
-        logging.info('Balance threshold is configured and the new gap exceeds the threshold.')
-        verb = 'remains' if old_gap > threshold else 'has moved'
-        message = "**WARNING**: The iRating gap of the fixed teams {0} outside of the balance threshold ({1})".format(verb, round(threshold, 2))
-        teams_to_show = new_fixed_teams
-      else:
-        logging.info('Balance threshold is not configured, or the new gap does not exceed the threshold.')
-        message = "The iRating gap of the fixed teams has changed from {0} to {1}.".format(round(old_gap, 2), round(new_gap, 2))
-        teams_to_show = None
-    else:
-      logging.info('Guild does not have fixed teams. Calculating optimal balance, then calculating the difference in iRating gap between the new and old balances.')
-      team_sizes = load_team_sizes(guild_id)
-      if not team_sizes:
-        logging.info('Guild does not have team sizes.')
-        return
-      balance = load_balance(guild_id)
-      combinations = load_combinations(guild_id)
-      new_balance = find_balanced_teams(drivers, team_sizes, combinations)
-      persist_balance(guild_id, new_balance)
-      old_gap = irating_gap(balance)
-      new_gap = irating_gap(new_balance)
-      if sets_equivalent(balance, new_balance):
-        logging.info('New and old balances are equivalent.')
-        if threshold:
-          logging.info('Balance threshold is configured.')
-          if new_gap > threshold:
-            logging.info('New gap exceeds balance threshold.')
-            if old_gap > threshold:
-              conjunction, verb = 'and', 'remains'
-            else:
-              conjunction, verb = 'but', 'has moved'
-            message = "The optimal balance of team members has not changed, {0} the iRating gap {1} outside of the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
-            teams_to_show = new_balance
-          else:
-            logging.info('New gap does not exceed balance threshold.')
-            message = "The optimal balance of team members has not changed.\nThe iRating gap has changed from {0} to {1}, which is inside the balance threshold ({2}).".format(round(old_gap, 2), round(new_gap, 2), round(threshold, 2))
-            teams_to_show = None
-        else:
-          logging.info('Balance threshold is not configured. Nothing to report.')
-      else:
-        logging.info('New set is not equivalent to old set.')
-        teams_to_show = new_balance
-        if threshold:
-          logging.info('Balance threshold is configured.')
-          if new_gap > threshold:
-            logging.info('New gap exceeds threshold.')
-            if old_gap > threshold:
-              conjunction, verb = 'but', 'remains'
-            else:
-              conjunction, verb = 'and', 'has moved'
-            message = "The optimal balance of team members has changed, {0} the iRating gap {1} outside of the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
-          else:
-            logging.info('New gap is within threshold.')
-            if old_gap > threshold:
-              conjunction, verb = 'and', 'has moved'
-            else:
-              conjunction, verb = 'but', 'remains'
-            message = "The optimal balance of team members has changed, {0} the iRating gap {1} inside the balance threshold ({2})".format(conjunction, verb, round(threshold, 2))
-        else:
-          logging.info('Balance threshold is not configured.')
-          message = "The optimal balance of team members has changed"
-    if teams_to_show:
-      logging.info('Teams will be shown.')
-      await channel.send(display_format_teams(teams_to_show, message))
-    else:
-      logging.info('Teams will not be shown.')
-      await channel.send(message)
-
+    background_recheck_guild(guild_id)
+    
 async def periodic_task():
   logging.info('Establishing periodic tasks.')
   p1 = Periodic(BACKGROUND_RECHECK_PERIOD_MINUTES * 60, background_recheck)
@@ -871,7 +886,9 @@ async def on_message(message):
         clear_teams(guild_id)
       if guild_has_file(guild_id, FilePrefix.balance):
         clear_balance(guild_id)
-      await channel.send('Cleared all {0} drivers, including fixed teams and calculated balance.'.format(guild_name))
+      if guild_has_file(guild_id, FilePrefix.combinations):
+        clear_combinations(guild_id)
+      await channel.send('Cleared all {0} drivers, including combinations, fixed teams and calculated balance.'.format(guild_name))
     
     elif msg.startswith('recheck rating '):
       logging.info('Processing recheck rating request.')
@@ -1041,7 +1058,7 @@ async def on_message(message):
         
     elif msg.startswith('recheck balance'):
       logging.info('Processing deprecated `recheck balance` request')
-      await channel.send("The 'recheck balance' command has changed to 'recalculate balance'."
+      await channel.send("The 'recheck balance' command has changed to 'recalculate balance'.")
       logging.info('Response sent.')
     
     elif msg.startswith('recalculate balance'):
@@ -1058,6 +1075,10 @@ async def on_message(message):
         return
       balance = load_balance(guild_id)
       combinations = load_combinations(guild_id)
+      reason = reason_cannot_calculate_balance(len(drivers), team_sizes)
+      if reason:
+        await channel.send("It is not currently possible to perform a balance calculation: {0}".format(reason))
+        return
       await channel.trigger_typing()
       balanced_teams = find_balanced_teams(drivers, team_sizes, combinations)
       logging.info('Balance calculated.')
