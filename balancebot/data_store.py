@@ -47,7 +47,6 @@ class DataStore:
   def guild_file_path(self, file_name):
     return os.path.join(self.guild_dir_path(), file_name + FILE_EXT)
   
-  # TODO there could be some intermediate state where not all of the files exist
   def is_data_initialized(self):
     return os.path.isdir(self.guild_dir_path())
   
