@@ -1,3 +1,8 @@
+import logging
+logging.basicConfig(filename='bot.log',
+                    level=logging.INFO,
+                    format='[%(asctime)s %(levelname)07s]:%(message)s')
+
 import asyncio
 import discord
 import dotenv
