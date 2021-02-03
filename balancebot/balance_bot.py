@@ -329,7 +329,6 @@ class BalanceBot:
     if not self.guild.has_drivers():
       await self.interface.print('No {0} drivers have been added.'.format(self.guild.name))
       return
-    # TODO maybe this could be DRYed up by throwing and catching exceptions?
     drivers = []
     for driver_identifier in driver_identifiers:
       driver = self.identify_driver(driver_identifier)
