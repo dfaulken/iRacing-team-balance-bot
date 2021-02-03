@@ -21,8 +21,6 @@ class Guild:
     self._data_store.save_combinations(self.combinations)
   
   def add_driver(self, driver):
-    # TODO clear balance
-    # TODO what should happen to teams?
     self._drivers.add_driver(driver)
     self._data_store.save_drivers(self._drivers)
   
