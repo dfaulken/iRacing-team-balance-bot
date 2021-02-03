@@ -9,8 +9,6 @@ from balancebot.driver            import Driver
 from balancebot.driver_set        import DriverSet
 from balancebot.driver_collection import DriverCollection
 
-# TODO I feel like there's a better way to provide encapsulation here:
-# Maybe a DataStore interface implemented by a JSONDataStore class?
 DATA_DIRECTORY = 'data'
 DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S'
 FILE_EXT = '.json'
