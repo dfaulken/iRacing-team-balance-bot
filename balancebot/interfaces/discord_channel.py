@@ -95,7 +95,6 @@ class DiscordChannel:
   
   async def perform_background_recheck(self, guild_id):
     self.bot.initialize_guild(guild_id)
-    # TODO constant for channel_id
     channel_id = self.bot.get_monitoring_data().get('channel_id')
     if not channel_id:
       return

@@ -70,7 +70,6 @@ class Guild:
     self._drivers.remove_driver(driver)
     self._data_store.save_drivers(self._drivers)
   
-  # TODO maybe update_driver?
   def save_driver(self, driver):
     self._drivers = self._drivers.with_updated_driver(driver)
     self._data_store.save_drivers(self._drivers)
