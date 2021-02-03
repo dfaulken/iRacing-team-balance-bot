@@ -396,7 +396,6 @@ class BalanceBot:
       if not team_size >= 2 and team_size <= 10:
         await self.interface.print('Team size {0} is not valid. Team sizes must be integers between 2 and 10.'.format(str(team_size)))
         return
-    # TODO should be unique as well
     team_sizes.sort()
     self.guild.set_team_sizes(team_sizes)
     team_sizes_str = ', '.join([str(team_size) for team_size in team_sizes])
