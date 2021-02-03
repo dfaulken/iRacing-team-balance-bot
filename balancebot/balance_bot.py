@@ -195,7 +195,7 @@ class BalanceBot:
    
   async def find_driver_irating(self, driver_id):
     if not self.quarter_number:
-      self.update_quarter_number()
+      await self.update_quarter_number()
     try:
       event_results = await self.client.event_results(driver_id,
                                                       self.quarter_number,
@@ -212,7 +212,8 @@ class BalanceBot:
     if new_iratings:
       return new_iratings[0]
     else:
-      return await self.find_driver_irating_from_chart(driver_id)
+      irating = await self.find_driver_irating_from_chart(driver_id)
+      return irating
   
   async def find_driver_irating_from_chart(self, driver_id):
     chart_data = await self.client.irating(cust_id=driver_id, category=constants.Category.road.value)
@@ -226,7 +227,7 @@ class BalanceBot:
     return self.guild.monitoring_data
   
   async def get_quarter_number(self):
-    seasons = await ir_client.current_seasons(only_active=True)
+    seasons = await self.client.current_seasons(only_active=True)
     quarters = [season.season_quarter for season in seasons]
     return quarters[0] # They should all be the same. Unless VLN enduro gets in the way or something.
   
@@ -482,7 +483,7 @@ class BalanceBot:
     return False
   
   async def update_quarter_number(self):
-    self.quarter_number = self.get_quarter_number()
+    self.quarter_number = await self.get_quarter_number()
     self.data_store_class.save_quarter_number(self.quarter_number)
     
   
