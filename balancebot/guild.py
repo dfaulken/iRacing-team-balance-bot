@@ -1,7 +1,6 @@
 from balancebot.driver_set        import DriverSet
 from balancebot.driver_collection import DriverCollection
 
-# TODO Guild should perform its own validation and raise exceptions, forcing Bot class to check for them as well if it wants to be well-implemented
 class Guild:
   def __init__(self, id, data_store):
     self._id         = id
