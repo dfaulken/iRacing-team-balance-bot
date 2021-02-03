@@ -36,7 +36,7 @@ class DriverCollection:
   
   def ordered_driver_sets(self):
     ordered = list(self.driver_sets)
-    ordered.sort(key=lambda driver_set: driver_set.highest_irating())
+    ordered.sort(key=lambda driver_set: driver_set.highest_irating(), reverse=True)
     return ordered
     
   def remove_driver_set(self, driver_set):
