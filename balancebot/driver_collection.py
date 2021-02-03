@@ -13,8 +13,14 @@ class DriverCollection:
   def add_driver_set(self, driver_set):
     for driver in driver_set.drivers:
       if self.has_driver(driver):
-        raise KeyError("Team set already includes driver ID {0}".format(driver.name))
+        raise KeyError("Team set already includes driver {0}".format(driver.name))
     self.driver_sets.add(driver_set)
+    
+  def copy(collection):
+    new = DriverCollection()
+    for driver_set in collection.driver_sets:
+      new.add_driver_set(driver_set)
+    return new
   
   def drivers(self):
     return sum([list(driver_set.drivers) for driver_set in self.driver_sets], []) # flatten

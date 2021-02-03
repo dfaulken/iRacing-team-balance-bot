@@ -18,7 +18,7 @@ ir_client = pyracing.Client(os.getenv('IR_USERNAME'), os.getenv('IR_PASSWORD'))
 
 async def check_quarter_number():
   bot = BalanceBot(ir_client, DataStore)
-  bot.update_quarter_number()
+  await bot.update_quarter_number()
 
 async def perform_background_rechecks():
   for guild_id in DataStore.data_subdirectory_numbers():

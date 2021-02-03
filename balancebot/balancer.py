@@ -52,9 +52,10 @@ class Balancer:
         for driver_collection in pattern_sets:
           remaining_drivers = [driver for driver in self.drivers if not driver_collection.has_driver(driver)]
           driver_sets = Balancer.unique_driver_sets(remaining_drivers, team_size)
-          for driver_set in driver_sets:
-            driver_collection.add_driver_set(driver_set)
-            next_level_pattern_sets.append(driver_collection)
+          for driver_set in Balancer.unique_driver_sets(remaining_drivers, team_size):
+            new_collection = DriverCollection.copy(driver_collection)
+            new_collection.add_driver_set(driver_set)
+            next_level_pattern_sets.append(new_collection)
         pattern_sets = next_level_pattern_sets
       self._driver_collections += pattern_sets
   
