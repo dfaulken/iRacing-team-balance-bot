@@ -35,7 +35,7 @@ class DriverSet:
     return ordered
   
   def remove_driver(self, driver):
-    self.drivers.remove(driver)
+    self.drivers.discard(driver)
   
   def size(self):
     return len(self.drivers)
