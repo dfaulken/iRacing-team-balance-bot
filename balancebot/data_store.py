@@ -58,7 +58,7 @@ class DataStore:
     self.save_combinations(DriverCollection())
     self.save_drivers(DriverSet())
     self.save_team_sizes([])
-    self.save_driver_sets(DriverCollection())
+    self.save_teams(DriverCollection())
     
   # Data access methods below sorted by data type rather than name of method.
   
