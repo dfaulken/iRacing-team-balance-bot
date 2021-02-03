@@ -206,7 +206,7 @@ class BalanceBot:
       subsession_ids = [event_result.subsession_id for event_result in event_results]
       subsession_id = subsession_ids[0]
       subsession_data = await self.client.subsession_data(subsession_id)
-      new_iratings = [driver.irating_new for driver in subsession_data.driver if str(driver.cust_id) == driver_id]
+      new_iratings = [driver.irating_new for driver in subsession_data.driver if int(driver.cust_id) == driver_id]
     except TypeError: # iRacing client doesn't gracefully handle empty response.
       new_iratings = []
     if new_iratings:
