@@ -14,50 +14,31 @@ class Balancer:
     self.driver_count = len(self.drivers)
     self.team_sizes = team_sizes
     self.combinations = combinations
-  
-    self._driver_collections = []
-  
-  def filter_driver_collections_by_combinations(self):
-    matching_sets = copy.copy(self._driver_collections)
-    for combination in self.combinations.driver_sets:
-      sets_matching_combination = []
-      for driver_collection in matching_sets:
-          if Balancer.driver_collection_respects_combination(driver_collection, combination):
-            sets_matching_combination.append(driver_collection)
-      matching_sets = sets_matching_combination
-    self._driver_collections = matching_sets
-  
-  def lowest_irating_gap_driver_collection(self):
-    self._driver_collections.sort(key=lambda driver_collection: driver_collection.irating_gap())
-    return self._driver_collections[0]
+    
+    self.best_collection = None
+    self.best_collection_gap = None
   
   def optimal_balance(self):
-    self.populate_possible_driver_collections()
-    if self.combinations:
-      self.filter_driver_collections_by_combinations()
-    return self.lowest_irating_gap_driver_collection()
-    
-  def populate_possible_driver_collections(self):
-    # Find the possible (unique) ways to break down the number of drivers into driver_sets of the allowed size.
     for size_pattern in Balancer.possible_size_patterns(self.driver_count, self.team_sizes):
-      # Find the possible ways to assign drivers to the first driver_set in the pattern.
-      pattern_sets = []
-      for driver_set in Balancer.unique_driver_sets(self.drivers, size_pattern[0]):
-        driver_collection = DriverCollection()
-        driver_collection.add_driver_set(driver_set)
-        pattern_sets.append(driver_collection)
-      # For the next driver_set, expand each existing possibility for the first n driver_sets into a suite of sets for how to assign some of the remaining drivers into the first n + 1 driver_sets.
-      for team_size in size_pattern[1:]:
-        next_level_pattern_sets = []
-        for driver_collection in pattern_sets:
-          remaining_drivers = [driver for driver in self.drivers if not driver_collection.has_driver(driver)]
-          driver_sets = Balancer.unique_driver_sets(remaining_drivers, team_size)
-          for driver_set in Balancer.unique_driver_sets(remaining_drivers, team_size):
-            new_collection = DriverCollection.copy(driver_collection)
-            new_collection.add_driver_set(driver_set)
-            next_level_pattern_sets.append(new_collection)
-        pattern_sets = next_level_pattern_sets
-      self._driver_collections += pattern_sets
+      base_collection = DriverCollection()
+      self.search_possible_collections(base_collection, self.drivers, size_pattern)
+    return self.best_collection
+    
+  def search_possible_collections(self, current_collection, remaining_drivers, remaining_size_pattern):
+    team_size = remaining_size_pattern[0]
+    for driver_set in Balancer.unique_driver_sets(remaining_drivers, team_size):
+      if Balancer.driver_set_respects_combinations(driver_set, self.combinations):
+        new_collection = current_collection.copy()
+        new_collection.add_driver_set(driver_set)
+        new_size_pattern = remaining_size_pattern[1:]
+        if len(new_size_pattern) == 0:
+          if self.best_collection_gap == None or new_collection.irating_gap() < self.best_collection_gap:
+            self.best_collection = new_collection
+            self.best_collection_gap = new_collection.irating_gap()
+          return
+        new_remaining_drivers = [driver for driver in remaining_drivers if not driver_set.has_driver(driver)]
+        self.search_possible_collections(new_collection, new_remaining_drivers, new_size_pattern)
+  
   
   def possible_size_patterns(driver_count, team_sizes):
     patterns = []
@@ -94,14 +75,13 @@ class Balancer:
   
   def is_team_formation_possible(driver_count, team_sizes):
     return len(Balancer.possible_size_patterns(driver_count, team_sizes)) > 0
-  
-  # TODO this might belong in driver_collection since it's entirely about driver_collections
-  def driver_collection_respects_combination(driver_collection, combination):
-    for driver_set in driver_collection.driver_sets:
+        
+  def driver_set_respects_combinations(driver_set, combinations):
+    for combination in combinations.driver_sets:
       included = [driver in driver_set.drivers for driver in combination.drivers]
-      if all(included):
-        return True
-    return False
+      if any(included) and not all(included):
+        return False
+    return True
   
   def unique_driver_sets(drivers, size):
     if size == 1:
